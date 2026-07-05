@@ -1,0 +1,697 @@
+// --- Layout ----------------------------------------------------------
+
+.LinkRobinsWiki-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 24px;
+
+    > h1, > .LinkRobinsWiki-title {
+        flex: 1;
+    }
+}
+
+.LinkRobinsWiki-title {
+    // Scale with linkrobins/font-sizer's reading control. The var falls back to
+    // 1 (no change) when font-sizer isn't installed, and multiplies the
+    // element's own size, so headings grow correctly instead of collapsing.
+    font-size: calc(1.5rem * var(--lr-text-scale, 1));
+    font-weight: 700;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+    i {
+        color: var(--primary-color, #07adcc);
+    }
+}
+
+// --- Sidebar ---------------------------------------------------------
+
+.LinkRobinsWiki-newArticleButton {
+    width: 100%;
+}
+
+// --- Article list ----------------------------------------------------
+
+.LinkRobinsWiki-list {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--control-bg, rgba(0,0,0,0.08));
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.LinkRobinsWiki-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--control-bg, rgba(0,0,0,0.06));
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.12s;
+
+    &:hover {
+        background: var(--control-bg, rgba(0,0,0,0.03));
+        text-decoration: none;
+    }
+
+    &:last-child {
+        border-bottom: 0;
+    }
+}
+
+// Soft-deleted articles stay in an editor's list (until permanently removed)
+// but are dimmed and struck through so they read as "trashed".
+.LinkRobinsWiki-row--deleted {
+    opacity: 0.6;
+
+    .LinkRobinsWiki-row-subject {
+        text-decoration: line-through;
+        text-decoration-color: var(--muted-color, #888);
+    }
+}
+
+.LinkRobinsWiki-row-deletedBadge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 7px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    text-decoration: none;
+    vertical-align: middle;
+    color: var(--alert-error-color, #b71c1c);
+    background: fade(#b71c1c, 12%);
+    border-radius: 3px;
+}
+
+.LinkRobinsWiki-row-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.LinkRobinsWiki-row-subject {
+    font-weight: 600;
+    font-size: calc(1em * var(--lr-text-scale, 1));
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.LinkRobinsWiki-row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 0.8rem;
+    color: var(--muted-color, #888);
+}
+
+.LinkRobinsWiki-row-cat {
+    font-weight: 600;
+}
+
+// --- Empty state -----------------------------------------------------
+
+.LinkRobinsWiki-empty {
+    padding: 32px 24px;
+    text-align: center;
+    color: var(--muted-color, #888);
+    background: var(--control-bg, rgba(0,0,0,0.02));
+    border-radius: 8px;
+    line-height: 1.5;
+}
+
+// --- Compose / edit form ---------------------------------------------
+
+.LinkRobinsWiki-form {
+    .Form-group {
+        margin-bottom: 20px;
+    }
+
+    label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 6px;
+    }
+}
+
+.LinkRobinsWiki-formActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+// --- Article view ----------------------------------------------------
+
+.LinkRobinsWiki-deletedNotice {
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    background: fade(#b71c1c, 8%);
+    color: var(--alert-error-color, #b71c1c);
+    font-size: 0.9rem;
+}
+
+.LinkRobinsWiki-articleHeader {
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--control-bg, rgba(0,0,0,0.08));
+    position: relative;
+}
+
+.LinkRobinsWiki-articleTitle {
+    font-size: calc(1.8rem * var(--lr-text-scale, 1));
+    font-weight: 700;
+    margin: 0 0 8px;
+}
+
+.LinkRobinsWiki-articleControls {
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: inline-flex;
+    gap: 8px;
+}
+
+.LinkRobinsWiki-byline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--muted-color, #888);
+
+    a {
+        color: inherit;
+        font-weight: 600;
+    }
+}
+
+.LinkRobinsWiki-byline-sep {
+    opacity: 0.5;
+}
+
+.LinkRobinsWiki-byline-cat {
+    font-weight: 600;
+}
+
+.LinkRobinsWiki-articleBody {
+    line-height: 1.6;
+    word-wrap: break-word;
+    margin-bottom: 32px;
+
+    > *:first-child { margin-top: 0; }
+    > *:last-child  { margin-bottom: 0; }
+
+    // Keep a heading clear of the fixed forum header when it's jumped to
+    // directly (deep link or a contents click).
+    h1, h2, h3, h4, h5, h6 {
+        scroll-margin-top: 80px;
+    }
+}
+
+// --- Table of contents (sticky side rail) ----------------------------
+
+.LinkRobinsWiki-articleLayout {
+    display: flex;
+    align-items: flex-start;
+    gap: 36px;
+}
+
+.LinkRobinsWiki-articleMain {
+    flex: 1 1 auto;
+    // Let wide content (code blocks, tables) shrink instead of shoving the rail
+    // off the edge.
+    min-width: 0;
+}
+
+.LinkRobinsWiki-tocRail {
+    flex: 0 0 220px;
+    align-self: flex-start;
+    position: sticky;
+    top: 70px; // clear the fixed forum header
+    max-height: ~"calc(100vh - 90px)";
+    overflow-y: auto;
+}
+
+.LinkRobinsWiki-toc-title {
+    // Scale with the font-sizer reading control so the whole rail (title +
+    // links) grows together with the article body. No-op (x1) without it.
+    font-size: calc(0.72rem * var(--lr-text-scale, 1));
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted-color, #888);
+    margin: 0 0 10px;
+}
+
+.LinkRobinsWiki-toc-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-left: 2px solid var(--control-bg, rgba(127, 127, 127, 0.18));
+}
+
+.LinkRobinsWiki-toc-item {
+    margin: 0;
+    line-height: 1.4;
+}
+
+.LinkRobinsWiki-toc-item--level-1 > .LinkRobinsWiki-toc-link { padding-left: 12px; }
+.LinkRobinsWiki-toc-item--level-2 > .LinkRobinsWiki-toc-link { padding-left: 26px; }
+.LinkRobinsWiki-toc-item--level-3 > .LinkRobinsWiki-toc-link { padding-left: 40px; }
+
+.LinkRobinsWiki-toc-link {
+    display: block;
+    // Sits over the list's left border; a transparent border here is swapped
+    // for the accent color on the active item without shifting layout.
+    margin-left: -2px;
+    border-left: 2px solid transparent;
+    padding-top: 5px;
+    padding-bottom: 5px;
+    color: var(--muted-color, #888);
+    text-decoration: none;
+    // Scale with the font-sizer reading control; a no-op (x1) without it.
+    font-size: calc(0.85rem * var(--lr-text-scale, 1));
+    transition: color 0.12s, border-color 0.12s;
+
+    &:hover {
+        color: var(--text-color, inherit);
+        text-decoration: none;
+    }
+}
+
+.LinkRobinsWiki-toc-item.is-active > .LinkRobinsWiki-toc-link {
+    color: var(--primary-color, #07adcc);
+    border-left-color: var(--primary-color, #07adcc);
+    font-weight: 600;
+}
+
+// On narrow screens the rail can't sit beside the article, so stack it above
+// the content as a static contents box.
+@media (max-width: 767px) {
+    .LinkRobinsWiki-articleLayout {
+        flex-direction: column;
+        gap: 0;
+    }
+    .LinkRobinsWiki-tocRail {
+        order: -1;
+        position: static;
+        flex-basis: auto;
+        width: 100%;
+        max-height: none;
+        margin-bottom: 20px;
+        padding: 12px 14px;
+        background: var(--control-bg, rgba(127, 127, 127, 0.06));
+        border-radius: 6px;
+    }
+}
+
+// --- Revision history ------------------------------------------------
+
+.LinkRobinsWiki-history {
+    border-top: 1px solid var(--control-bg, rgba(0,0,0,0.08));
+    padding-top: 16px;
+}
+
+.LinkRobinsWiki-revisions {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+}
+
+.LinkRobinsWiki-revision {
+    border-bottom: 1px solid var(--control-bg, rgba(0,0,0,0.06));
+
+    &:last-child { border-bottom: 0; }
+}
+
+.LinkRobinsWiki-revision-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 4px;
+    background: none;
+    border: 0;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+    font-size: 0.85rem;
+
+    &:hover {
+        color: var(--primary-color, #07adcc);
+    }
+}
+
+.LinkRobinsWiki-revision-date {
+    font-weight: 600;
+}
+
+.LinkRobinsWiki-revision-user {
+    color: var(--muted-color, #888);
+}
+
+.LinkRobinsWiki-revision-summary {
+    color: var(--muted-color, #888);
+    font-style: italic;
+}
+
+.LinkRobinsWiki-revision-body {
+    padding: 8px 4px 16px;
+    line-height: 1.6;
+
+    > *:first-child { margin-top: 0; }
+    > *:last-child  { margin-bottom: 0; }
+}
+
+@media (max-width: 767px) {
+    .LinkRobinsWiki-articleTitle {
+        font-size: 1.4rem;
+    }
+    .LinkRobinsWiki-articleControls {
+        position: static;
+        margin-bottom: 12px;
+    }
+}
+
+// --- Customizable home page ------------------------------------------
+
+.LinkRobinsWiki-home {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+}
+
+.LinkRobinsWiki-homeBlock-title {
+    font-size: calc(1.15rem * var(--lr-text-scale, 1));
+    font-weight: 700;
+    margin: 0 0 12px;
+}
+
+.LinkRobinsWiki-prose {
+    line-height: 1.6;
+    // `1em` here is a no-op at the default size and scales the prose body text
+    // (paragraphs and other inherited text) when the reading control is raised.
+    font-size: calc(1em * var(--lr-text-scale, 1));
+
+    h1 { font-size: calc(1.6rem * var(--lr-text-scale, 1)); font-weight: 700; margin: 0 0 8px; }
+    h2 { font-size: calc(1.25rem * var(--lr-text-scale, 1)); font-weight: 700; margin: 16px 0 8px; }
+    h3 { font-size: calc(1.05rem * var(--lr-text-scale, 1)); font-weight: 700; margin: 12px 0 6px; }
+    p  { margin: 0 0 8px; color: var(--text-color, inherit); }
+}
+
+.LinkRobinsWiki-categoryCards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.LinkRobinsWiki-categoryCard {
+    display: block;
+    padding: 16px 18px;
+    border: 1px solid var(--control-bg, rgba(0,0,0,0.1));
+    border-radius: 8px;
+    background: var(--body-bg, #fff);
+    color: inherit;
+    text-decoration: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+
+    &:hover {
+        border-color: var(--primary-color, #07adcc);
+        box-shadow: 0 2px 8px var(--shadow-color, rgba(0,0,0,0.08));
+        text-decoration: none;
+    }
+}
+
+.LinkRobinsWiki-categoryCard-icon {
+    font-size: 1.3rem;
+    color: var(--primary-color, #07adcc);
+    margin-right: 8px;
+}
+
+.LinkRobinsWiki-categoryCard-name {
+    font-weight: 700;
+    font-size: calc(1em * var(--lr-text-scale, 1));
+}
+
+.LinkRobinsWiki-categoryCard-desc {
+    display: block;
+    margin-top: 6px;
+    color: var(--muted-color, #888);
+    font-size: calc(0.9rem * var(--lr-text-scale, 1));
+    line-height: 1.4;
+}
+
+// --- Article editor (compose/edit) -----------------------------------
+// Flarum's TextEditor is short and not full-width outside the docked composer;
+// give the article body a generous, full-width writing area.
+.LinkRobinsWiki-form {
+    .Form-group {
+        display: block;
+    }
+
+    .TextEditor {
+        display: block;
+        width: 100%;
+    }
+
+    .TextEditor textarea,
+    .TextEditor [contenteditable] {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 340px;
+        resize: vertical;
+    }
+}
+
+// --- Revision history / GitHub-style diff -----------------------------
+
+.LinkRobinsWiki-revision-caret {
+    color: var(--muted-color, #888);
+    font-size: 0.85em;
+    width: 10px;
+}
+
+.LinkRobinsWiki-revision-tag {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: var(--control-bg, rgba(0,0,0,0.06));
+    color: var(--muted-color, #888);
+    padding: 1px 7px;
+    border-radius: 999px;
+}
+
+.LinkRobinsWiki-revisionDiff {
+    padding: 6px 4px 18px;
+}
+
+.LinkRobinsWiki-diff-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--muted-color, #888);
+    margin-bottom: 10px;
+}
+
+.LinkRobinsWiki-diff-titleChange {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-size: 0.9rem;
+
+    .fas { color: var(--muted-color, #888); font-size: 0.8em; }
+}
+
+.LinkRobinsWiki-diff-titleLabel {
+    font-weight: 600;
+    color: var(--muted-color, #888);
+}
+
+.LinkRobinsWiki-diff {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    border: 1px solid var(--control-bg, rgba(0,0,0,0.12));
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.LinkRobinsWiki-diff-line {
+    display: flex;
+    white-space: pre-wrap;
+    word-break: break-word;
+
+    &.is-add { background: rgba(46, 160, 67, 0.18); }
+    &.is-del { background: rgba(248, 81, 73, 0.18); }
+    &.is-eq  { background: transparent; }
+}
+
+.LinkRobinsWiki-diff-sign {
+    flex: 0 0 24px;
+    text-align: center;
+    user-select: none;
+    color: var(--muted-color, #888);
+}
+.LinkRobinsWiki-diff-line.is-add .LinkRobinsWiki-diff-sign { color: #1a7f37; }
+.LinkRobinsWiki-diff-line.is-del .LinkRobinsWiki-diff-sign { color: #cf222e; }
+
+.LinkRobinsWiki-diff-text {
+    flex: 1;
+    min-width: 0;
+    padding-right: 10px;
+}
+
+.LinkRobinsWiki-diff-fold {
+    text-align: center;
+    color: var(--muted-color, #888);
+    background: var(--control-bg, rgba(0,0,0,0.03));
+    padding: 2px 0;
+    user-select: none;
+}
+
+.LinkRobinsWiki-diff-add {
+    color: #1a7f37;
+    font-weight: 600;
+}
+.LinkRobinsWiki-diff-del {
+    color: #cf222e;
+    font-weight: 600;
+    text-decoration: line-through;
+}
+
+.LinkRobinsWiki-diff-none {
+    font-size: 0.85rem;
+    color: var(--muted-color, #888);
+    font-style: italic;
+}
+
+// --- Docked composer (article + comment) -----------------------------
+
+.LinkRobinsWiki-composerTitle {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    i { color: var(--primary-color, #07adcc); }
+}
+
+.LinkRobinsWiki-composerTitle-cat {
+    font-weight: 400;
+    color: var(--muted-color, #888);
+}
+
+// Each header row on its own line (core lays them inline-block by default).
+.LinkRobinsWiki-articleComposer,
+.LinkRobinsWiki-commentComposer {
+    .ComposerBody-header > li {
+        display: block;
+        margin-right: 0;
+    }
+}
+
+// Discussion-style click-to-write box reused for the article body + comments.
+.LinkRobinsWiki-composePreview,
+.LinkRobinsWiki-comments-form {
+    display: block;
+    width: 100%;
+
+    .ReplyPlaceholder,
+    .Post {
+        display: block;
+        width: 100%;
+        margin: 0;
+        box-sizing: border-box;
+    }
+}
+
+// --- Comments --------------------------------------------------------
+
+.LinkRobinsWiki-comments {
+    margin-top: 32px;
+    border-top: 1px solid var(--control-bg, rgba(0,0,0,0.08));
+    padding-top: 20px;
+}
+
+.LinkRobinsWiki-comments-heading {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin: 0 0 16px;
+}
+
+.LinkRobinsWiki-comments-empty {
+    color: var(--muted-color, #888);
+    padding: 8px 0 16px;
+}
+
+.LinkRobinsWiki-commentList {
+    list-style: none;
+    margin: 0 0 16px;
+    padding: 0;
+}
+
+.LinkRobinsWiki-comment {
+    display: flex;
+    gap: 12px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--control-bg, rgba(0,0,0,0.06));
+
+    &:last-child { border-bottom: 0; }
+    &.is-deleted { opacity: 0.7; }
+}
+
+.LinkRobinsWiki-comment-side {
+    flex: 0 0 auto;
+
+    .Avatar { width: 36px; height: 36px; }
+}
+
+.LinkRobinsWiki-comment-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.LinkRobinsWiki-comment-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+    font-size: 0.85rem;
+    color: var(--muted-color, #888);
+}
+
+.LinkRobinsWiki-comment-author {
+    font-weight: 700;
+    color: var(--text-color, inherit);
+
+    a { color: inherit; }
+}
+
+.LinkRobinsWiki-comment-controls {
+    margin-left: auto;
+}
+
+.LinkRobinsWiki-comment-body {
+    line-height: 1.6;
+    word-wrap: break-word;
+
+    > *:first-child { margin-top: 0; }
+    > *:last-child  { margin-bottom: 0; }
+}
+
+.LinkRobinsWiki-comment-deleted {
+    font-style: italic;
+    color: var(--muted-color, #888);
+}
