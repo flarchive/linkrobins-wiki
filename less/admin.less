@@ -1,0 +1,82 @@
+.LinkRobinsWikiAdmin {
+    .helpText {
+        margin-bottom: 12px;
+    }
+
+    > .Button {
+        margin-bottom: 16px;
+    }
+}
+
+.LinkRobinsWikiAdmin-empty {
+    padding: 24px;
+    text-align: center;
+    color: var(--muted-color, #888);
+    background: var(--control-bg, rgba(0,0,0,0.03));
+    border-radius: 8px;
+}
+
+.LinkRobinsWikiAdmin-table {
+    width: 100%;
+    border-collapse: collapse;
+
+    th, td {
+        padding: 10px 12px;
+        text-align: left;
+        border-bottom: 1px solid var(--control-bg, rgba(0,0,0,0.06));
+    }
+
+    th {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted-color, #888);
+        font-weight: 600;
+    }
+
+    tbody tr:hover {
+        background: var(--control-bg, rgba(0,0,0,0.02));
+    }
+
+    code {
+        font-size: 0.85rem;
+        color: var(--muted-color, #888);
+    }
+}
+
+.LinkRobinsWikiAdmin-rowActions {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.LinkRobinsWikiAdmin-section {
+    margin-bottom: 32px;
+}
+
+.LinkRobinsWikiAdmin-section textarea.FormControl {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    min-height: 160px;
+}
+
+.LinkRobinsWikiAdmin-shortcodes {
+    margin: 12px 0 16px;
+    padding: 12px 16px;
+    background: var(--control-bg, rgba(0,0,0,0.03));
+    border-radius: 8px;
+
+    h4 { margin: 0 0 8px; }
+    ul { margin: 0; padding-left: 18px; }
+    li { margin-bottom: 4px; font-size: 0.9rem; }
+    code {
+        background: var(--body-bg, rgba(0,0,0,0.05));
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-size: 0.85rem;
+    }
+}
+
+// Push the delete button to the right of the submit row (mirrors EditTagModal).
+.LinkRobinsWikiCategoryEditorModal-delete {
+    margin-left: auto;
+}
