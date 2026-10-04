@@ -1,0 +1,913 @@
+import Page from 'flarum/common/components/Page';
+import LoadingIndicator from 'flarum/common/components/LoadingIndicator';
+import Button from 'flarum/common/components/Button';
+import Dropdown from 'flarum/common/components/Dropdown';
+import Tooltip from 'flarum/common/components/Tooltip';
+import WikiReportModal from './WikiReportModal';
+import PageStructure from 'flarum/forum/components/PageStructure';
+import WikiIndexSidebar from './WikiIndexSidebar';
+import WikiComments from './WikiComments';
+import { tr, trText } from '../utils/translate';
+import {
+  basePath,
+  BASE_PATH,
+  articleHref,
+  articleSegment,
+  executeContentScripts,
+  formatDate,
+  userLink,
+  showError,
+  fullWidth,
+  pageClassName,
+  emptySidebar,
+  mobileTitle,
+  relatedEnabled,
+  relatedLimit,
+  safeNavigate,
+} from '../utils/helpers';
+import { canEditWikiArticles, canViewWikiHistory, canReportWikiArticle } from '../utils/permissions';
+import { loadArticle, loadRevisions, WIKI_PAGE_LIMIT, loadArticles, QUIET } from '../utils/api';
+import { lineDiff, foldContext, hasChanges, DiffLine } from '../utils/diff';
+import { fixedChromeHeight, processWikiHeadings, scrollToAnchor, tocEnabled, tocMinHeadings, WikiTocEntry } from '../utils/toc';
+
+export default class WikiShowPage extends Page {
+  loading = true;
+  error: any = null;
+  article: any = null;
+
+  historyOpen = false;
+  revisions: any[] | null = null;
+  revisionsLoading = false;
+  revisionsLoadingMore = false;
+  revisionsHasMore = false;
+  expandedRevision: string | null = null;
+
+  // Table of contents (sticky rail on desktop, sticky bar on phones). Entries
+  // are derived from the rendered article body; activeTocId tracks the section
+  // currently in view.
+  related: any[] = [];
+  tocEntries: WikiTocEntry[] = [];
+  activeTocId: string | null = null;
+  mobileTocOpen = false;
+  // Whether the phone contents bar is pinned below the titlebar. Core sets
+  // `overflow-x: hidden` on the body at phone width (for the drawer), which
+  // keeps position: sticky from ever engaging, so the pinning is done by hand
+  // from the existing scroll handler: once the bar's in-flow slot scrolls
+  // under the titlebar, the inner bar goes position: fixed and the slot keeps
+  // its height as a spacer.
+  mobileTocPinned = false;
+  private _barMetrics: { height: number; left: number; width: number } | null = null;
+  private _tocSig = '';
+  private _tocHashHandled = false;
+  private _boundScroll: (() => void) | null = null;
+  private _spyRaf: number | null = null;
+
+  oninit(vnode: any) {
+    super.oninit(vnode);
+    this._load();
+  }
+
+  oncreate(vnode: any) {
+    super.oncreate(vnode);
+    // Scroll-spy: highlight the contents entry for the section in view. Passive
+    // + rAF-throttled so it stays off the scroll critical path.
+    this._boundScroll = () => this._scheduleSpy();
+    window.addEventListener('scroll', this._boundScroll, { passive: true });
+  }
+
+  onremove(vnode: any) {
+    if (this._boundScroll) {
+      window.removeEventListener('scroll', this._boundScroll);
+      this._boundScroll = null;
+    }
+    if (this._spyRaf != null) {
+      cancelAnimationFrame(this._spyRaf);
+      this._spyRaf = null;
+    }
+    if (super.onremove) super.onremove(vnode);
+  }
+
+  onbeforeupdate(vnode: any) {
+    // The route param may be the article's id or its slug; both name the same
+    // article, so only a param matching neither means a real navigation.
+    const param = String(m.route.param('id'));
+    if (this.article && String(this.article.id()) !== param && String(this.article.slug && this.article.slug()) !== param) {
+      this._load();
+    }
+    return true;
+  }
+
+  _load() {
+    this.loading = true;
+    this.error = null;
+    this.revisions = null;
+    this.revisionsHasMore = false;
+    this.historyOpen = false;
+    this.related = [];
+    this.tocEntries = [];
+    this.activeTocId = null;
+    this.mobileTocOpen = false;
+    this.mobileTocPinned = false;
+    this._barMetrics = null;
+    this._tocSig = '';
+    this._tocHashHandled = false;
+    m.redraw();
+
+    this._preloadedOrFetch(m.route.param('id'))
+      .then((article: any) => {
+        this.article = article;
+        this.loading = false;
+        this._loadRelated(article);
+        try {
+          app.setTitle(article.title() || tr('nav', 'Wiki'));
+        } catch (e) {}
+        this._canonicalizeUrl(article);
+        m.redraw();
+      })
+      .catch((err: any) => {
+        this.error = err;
+        this.loading = false;
+        m.redraw();
+      });
+  }
+
+  // The server puts the article in the page payload on first load, the way
+  // core does for a discussion. Using it skips a request, and it is what keeps
+  // the article on screen for a crawler that cannot reach the API: Googlebot
+  // obeys robots.txt for the requests a page makes, and SEO extensions such as
+  // fof/sitemap disallow /api. Core only hands the document out while the URL
+  // is still the one the page was served for, and only once.
+  _preloadedOrFetch(id: string): Promise<any> {
+    try {
+      // pushPayload hands back the stored model with the raw document on it.
+      const preloaded: any = app.preloadedApiDocument();
+      if (preloaded && !Array.isArray(preloaded) && preloaded.payload?.data?.type === 'linkrobins-wiki-articles') {
+        return Promise.resolve(preloaded);
+      }
+    } catch (e) {}
+
+    return loadArticle(id);
+  }
+
+  // If the article was reached by id but has a slug, quietly rewrite the
+  // address bar to the slug URL so the canonical form is what gets copied and
+  // shared. replaceState only: no navigation, and onbeforeupdate accepts both
+  // forms so the stale route param can't trigger a reload.
+  _canonicalizeUrl(article: any) {
+    try {
+      const param = String(m.route.param('id'));
+      const want = articleSegment(article);
+      if (want && param !== want) {
+        window.history.replaceState(null, '', articleHref(article) + window.location.hash);
+      }
+    } catch (e) {
+      // history API unavailable -- the id URL works fine too.
+    }
+  }
+
+  view() {
+    return m(
+      PageStructure,
+      {
+        className: pageClassName('IndexPage LinkRobinsWiki-page LinkRobinsWiki-page--show'),
+        sidebar: fullWidth()
+          ? emptySidebar
+          : () => {
+              try {
+                const cat = this.article && this.article.category && this.article.category();
+                return m(WikiIndexSidebar, { className: 'LinkRobinsWiki-sidebar', activeCategory: cat ? cat.id() : null });
+              } catch (e) {
+                return null;
+              }
+            },
+      },
+      m('div', { className: 'LinkRobinsWiki-container' }, [mobileTitle(), this._renderContent()])
+    );
+  }
+
+  _renderContent() {
+    if (this.loading) {
+      return m(LoadingIndicator);
+    }
+    if (this.error || !this.article) {
+      return m('div', { className: 'LinkRobinsWiki-empty' }, tr('errors.load_article', 'Could not load this article.'));
+    }
+
+    const article = this.article;
+    const isDeleted = !!(article.isDeleted && article.isDeleted());
+
+    return [
+      this._renderMobileToc(article),
+
+      isDeleted
+        ? m('div', { className: 'LinkRobinsWiki-deletedNotice' }, tr('show.deleted_notice', 'This article is deleted. Only editors can see it.'))
+        : null,
+
+      article.isDraft && article.isDraft()
+        ? m(
+            'div',
+            { className: 'LinkRobinsWiki-draftNotice' },
+            tr('show.draft_notice', 'This article is a draft. Only you and wiki editors can see it.')
+          )
+        : null,
+
+      m('div', { className: 'LinkRobinsWiki-articleLayout' }, [
+        m('div', { className: 'LinkRobinsWiki-articleMain' }, [
+          m('header', { className: 'LinkRobinsWiki-articleHeader' }, [
+            this._renderControls(article),
+            m('h1', { className: 'LinkRobinsWiki-articleTitle' }, article.title()),
+            this._renderByline(article),
+          ]),
+
+          m(
+            'div',
+            {
+              className: 'LinkRobinsWiki-articleBody Post-body',
+              // The body is m.trust'd HTML, so headings only exist post-render:
+              // instrument them once they're in the DOM (and again if the article
+              // content changes, which remounts the trusted node). Scripts the
+              // formatter embedded (e.g. the code-highlighting loader) are inert
+              // after m.trust and must be re-run.
+              oncreate: (vnode: any) => {
+                executeContentScripts(vnode.dom, article.contentHtml() || '');
+                this._processToc(vnode.dom);
+              },
+              onupdate: (vnode: any) => {
+                executeContentScripts(vnode.dom, article.contentHtml() || '');
+                this._processToc(vnode.dom);
+              },
+            },
+            m.trust(article.contentHtml() || '')
+          ),
+
+          this._renderFaq(article),
+
+          this._renderRelated(article),
+
+          this._renderHistory(article),
+
+          m(WikiComments, { article }),
+        ]),
+
+        this._renderTocRail(),
+      ]),
+    ];
+  }
+
+  // --- FAQ ----------------------------------------------------------------
+
+  // The article's optional FAQ accordion, under the body. Native
+  // <details>/<summary> so expand/collapse needs no state, plus a FAQPage
+  // JSON-LD block so search engines can pick the entries up as rich results
+  // (it's data, not executable, so rendering it inline is safe). Articles
+  // without entries render nothing at all.
+  _renderFaq(article: any) {
+    const entries = ((article.faq && article.faq()) || []).filter((entry: any) => entry && entry.question);
+    if (!entries.length) return null;
+
+    const jsonLd = {
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: entries.map((entry: any) => ({
+        '@type': 'Question',
+        name: entry.question,
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: String(entry.answerHtml || '')
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim(),
+        },
+      })),
+    };
+
+    return m('section', { className: 'LinkRobinsWiki-faq' }, [
+      m('h2', { className: 'LinkRobinsWiki-faq-heading' }, tr('show.faq_heading', 'Frequently asked questions')),
+      entries.map((entry: any, index: number) =>
+        m('details', { className: 'LinkRobinsWiki-faq-item', key: 'faq-' + index }, [
+          m('summary', { className: 'LinkRobinsWiki-faq-question' }, [
+            m('i', { className: 'fas fa-caret-right LinkRobinsWiki-faq-caret', 'aria-hidden': 'true' }),
+            entry.question,
+          ]),
+          m(
+            'div',
+            {
+              className: 'LinkRobinsWiki-faq-answer Post-body',
+              // Same trusted-HTML rule as the article body: formatter scripts
+              // (e.g. the code-highlighting loader) are inert after m.trust
+              // and must be re-created to run.
+              oncreate: (vnode: any) => executeContentScripts(vnode.dom, entry.answerHtml || ''),
+              onupdate: (vnode: any) => executeContentScripts(vnode.dom, entry.answerHtml || ''),
+            },
+            m.trust(entry.answerHtml || '')
+          ),
+        ])
+      ),
+      m('script', { type: 'application/ld+json' }, JSON.stringify(jsonLd)),
+    ]);
+  }
+
+  // --- Table of contents -------------------------------------------------
+
+  _processToc(bodyEl: Element) {
+    if (!tocEnabled()) return;
+
+    const entries = processWikiHeadings(bodyEl);
+    const sig = entries.map((e) => e.level + ':' + e.id).join('|');
+
+    // Only redraw when the heading set actually changed. processWikiHeadings is
+    // idempotent (ids are reused via data attributes), so the redraw it triggers
+    // re-enters onupdate, recomputes the same signature, and stops -- no loop.
+    if (sig !== this._tocSig) {
+      this._tocSig = sig;
+      this.tocEntries = entries;
+      this._spy(false);
+      m.redraw();
+    }
+
+    // Honor a deep link to a heading (#wiki-...) once the anchors exist. The
+    // browser's own jump happened before ids were assigned, so we finish it.
+    if (!this._tocHashHandled) {
+      this._tocHashHandled = true;
+      const hash = (window.location.hash || '').replace(/^#/, '');
+      if (hash && entries.some((e) => e.id === hash)) {
+        requestAnimationFrame(() => scrollToAnchor(hash));
+      }
+    }
+  }
+
+  _tocReady(): boolean {
+    return tocEnabled() && this.tocEntries.length >= tocMinHeadings();
+  }
+
+  _renderTocRail() {
+    if (!this._tocReady()) return null;
+
+    return m(
+      'aside',
+      { className: 'LinkRobinsWiki-tocRail' },
+      m('nav', { className: 'LinkRobinsWiki-toc', 'aria-label': trText('show.toc_heading', 'Contents') }, [
+        m('div', { className: 'LinkRobinsWiki-toc-title' }, tr('show.toc_heading', 'Contents')),
+        this._renderTocList(),
+      ])
+    );
+  }
+
+  // The phone contents bar: article title + a hamburger revealing the
+  // contents, reachable from anywhere in the article (the side rail can't sit
+  // beside the text there and a top-of-page box is gone once you scroll).
+  // Display is media-queried, so it simply doesn't show on desktop. The outer
+  // div is the in-flow slot; when pinned it holds the bar's height as a spacer
+  // while the inner div goes fixed below the titlebar.
+  _renderMobileToc(article: any) {
+    if (!this._tocReady()) return null;
+
+    const open = this.mobileTocOpen;
+    const pinned = this.mobileTocPinned && this._barMetrics;
+
+    return m(
+      'div',
+      {
+        className: 'LinkRobinsWiki-mobileToc' + (open ? ' is-open' : '') + (pinned ? ' is-pinned' : ''),
+        style: pinned ? { height: this._barMetrics!.height + 'px' } : undefined,
+      },
+      m(
+        'div',
+        {
+          className: 'LinkRobinsWiki-mobileToc-inner',
+          style: pinned ? { left: this._barMetrics!.left + 'px', width: this._barMetrics!.width + 'px' } : undefined,
+        },
+        [
+          m(
+            'button',
+            {
+              type: 'button',
+              className: 'LinkRobinsWiki-mobileToc-bar',
+              'aria-expanded': open ? 'true' : 'false',
+              'aria-controls': 'linkrobins-wiki-mobile-toc',
+              'aria-label': trText('show.toc_heading', 'Contents'),
+              onclick: () => {
+                this.mobileTocOpen = !open;
+              },
+            },
+            [
+              m('span', { className: 'LinkRobinsWiki-mobileToc-title' }, article.title()),
+              m('i', { className: 'fas ' + (open ? 'fa-times' : 'fa-bars') + ' LinkRobinsWiki-mobileToc-icon', 'aria-hidden': 'true' }),
+            ]
+          ),
+          open
+            ? m(
+                'nav',
+                {
+                  id: 'linkrobins-wiki-mobile-toc',
+                  className: 'LinkRobinsWiki-mobileToc-panel',
+                  'aria-label': trText('show.toc_heading', 'Contents'),
+                },
+                this._renderTocList(() => {
+                  this.mobileTocOpen = false;
+                })
+              )
+            : null,
+        ]
+      )
+    );
+  }
+
+  // The contents list itself, shared by the rail and the phone panel. When
+  // `onNavigate` is given (the panel), it runs before the scroll and the
+  // scroll waits a frame, so the panel's collapse can reflow the page before
+  // the target position is measured.
+  _renderTocList(onNavigate?: () => void) {
+    const entries = this.tocEntries;
+
+    // Level 1 in the list is the shallowest heading actually present, so a
+    // ##/### article still indents from a sensible baseline.
+    let minLevel = Infinity;
+    for (const e of entries) if (e.level < minLevel) minLevel = e.level;
+    if (!isFinite(minLevel)) minLevel = 1;
+
+    return m(
+      'ol',
+      { className: 'LinkRobinsWiki-toc-list' },
+      entries.map((e) =>
+        m(
+          'li',
+          {
+            key: e.id,
+            className:
+              'LinkRobinsWiki-toc-item LinkRobinsWiki-toc-item--level-' + (e.level - minLevel + 1) + (this.activeTocId === e.id ? ' is-active' : ''),
+          },
+          m(
+            'a',
+            {
+              className: 'LinkRobinsWiki-toc-link',
+              href: '#' + e.id,
+              onclick: (ev: Event) => {
+                ev.preventDefault();
+                this.activeTocId = e.id;
+                try {
+                  window.history.replaceState(null, '', '#' + e.id);
+                } catch (err) {
+                  // history API unavailable -- non-fatal, the scroll still happens.
+                }
+                if (onNavigate) {
+                  onNavigate();
+                  requestAnimationFrame(() => scrollToAnchor(e.id));
+                } else {
+                  scrollToAnchor(e.id);
+                }
+              },
+            },
+            e.text
+          )
+        )
+      )
+    );
+  }
+
+  _scheduleSpy() {
+    if (this._spyRaf != null) return;
+    this._spyRaf = requestAnimationFrame(() => {
+      this._spyRaf = null;
+      this._updateMobileTocPin();
+      this._spy(true);
+    });
+  }
+
+  // Manual sticky for the phone bar (see the mobileTocPinned comment). The
+  // wrapper always stays in flow, so its rect tells us on every scroll tick
+  // whether the bar's natural position is under the titlebar.
+  _updateMobileTocPin() {
+    const wrap = document.querySelector('.LinkRobinsWiki-mobileToc') as HTMLElement | null;
+
+    if (!wrap || getComputedStyle(wrap).display === 'none') {
+      if (this.mobileTocPinned) {
+        this.mobileTocPinned = false;
+        m.redraw();
+      }
+      return;
+    }
+
+    const rect = wrap.getBoundingClientRect();
+    // +6 matches the pinned `top` gap in the LESS, so the bar doesn't jump
+    // when the handoff from in-flow to fixed happens.
+    const shouldPin = rect.top <= fixedChromeHeight() + 6;
+
+    if (shouldPin !== this.mobileTocPinned) {
+      if (shouldPin) {
+        // Spacer height = the bar row (not the wrapper, whose rect would
+        // include an open panel); left/width keep the fixed bar aligned with
+        // the content column.
+        const row = wrap.querySelector('.LinkRobinsWiki-mobileToc-bar');
+        this._barMetrics = {
+          height: row ? row.getBoundingClientRect().height + 2 : rect.height,
+          left: rect.left,
+          width: rect.width,
+        };
+      }
+      this.mobileTocPinned = shouldPin;
+      m.redraw();
+    }
+  }
+
+  // Pick the last heading whose top has scrolled above the header line; that's
+  // the section the reader is currently in. Entries are in document order, so we
+  // can stop at the first heading still below the line.
+  _spy(allowRedraw: boolean) {
+    if (!this.tocEntries.length) return;
+
+    // The phone contents bar also covers the top of the viewport once pinned
+    // (its row measures 0 on desktop, where it's display: none).
+    const bar = document.querySelector('.LinkRobinsWiki-mobileToc-bar');
+    const threshold = fixedChromeHeight() + (bar ? bar.getBoundingClientRect().height : 0) + 24;
+
+    let current: string | null = this.tocEntries[0].id;
+    for (const e of this.tocEntries) {
+      const el = document.getElementById(e.id);
+      if (!el) continue;
+      if (el.getBoundingClientRect().top - threshold <= 0) {
+        current = e.id;
+      } else {
+        break;
+      }
+    }
+
+    if (current !== this.activeTocId) {
+      this.activeTocId = current;
+      if (allowRedraw) m.redraw();
+    }
+  }
+
+  _renderByline(article: any) {
+    const author = article.user && article.user();
+    const editor = article.lastEditedBy && article.lastEditedBy();
+    const cat = article.category && article.category();
+
+    const segments: any[] = [];
+    if (cat) {
+      segments.push(
+        m(
+          'a',
+          {
+            className: 'LinkRobinsWiki-byline-cat',
+            href: basePath() + BASE_PATH + '?category=' + encodeURIComponent(cat.id()),
+            style: 'color: ' + (cat.color() || 'inherit'),
+          },
+          cat.name()
+        )
+      );
+    }
+    if (author) {
+      segments.push(m('span', { className: 'LinkRobinsWiki-byline-author' }, [tr('show.by', 'by '), userLink(author)]));
+    }
+    // Who last touched it and when is worth having, but not worth a second
+    // name and a timestamp on the line above the article: on a wiki the author
+    // and the last editor are usually the same person, so the byline said it
+    // twice. An icon carries it instead, and the detail is one hover away for
+    // anyone who actually wants it.
+    const when = formatDate(article.lastEditedAt() || article.createdAt());
+    const editorName = editor ? editor.displayName() || editor.username() : '';
+    const detail = editor
+      ? // `user` is a reserved translator param (it expects a User model and
+        // rewrites the placeholder to {username}), so a plain name goes as {name}.
+        trText('show.last_edited_tooltip', 'Last edited by {name} on {date}', { name: editorName, date: when })
+      : trText('show.created_tooltip', 'Written on {date}', { date: when });
+
+    segments.push(
+      m(
+        Tooltip,
+        { text: detail, position: 'bottom' },
+        // A real element rather than a component, which is what Tooltip wants
+        // to attach to, and focusable so the detail is reachable without a
+        // mouse.
+        m(
+          'span',
+          {
+            className: 'LinkRobinsWiki-byline-edited',
+            tabindex: '0',
+            role: 'note',
+            'aria-label': detail,
+          },
+          m('i', { className: 'fas fa-clock-rotate-left', 'aria-hidden': 'true' })
+        )
+      )
+    );
+
+    // Interleave with a middot separator so the segments stay on one tidy line
+    // with consistent spacing (no run-together names, no oversized gaps).
+    const out: any[] = [];
+    segments.forEach((seg, i) => {
+      if (i > 0) out.push(m('span', { className: 'LinkRobinsWiki-byline-sep' }, '·'));
+      out.push(seg);
+    });
+
+    return m('div', { className: 'LinkRobinsWiki-byline' }, out);
+  }
+
+  _renderControls(article: any) {
+    const canUpdate = !!(article.canUpdate && article.canUpdate());
+    const canDelete = !!(article.canDelete && article.canDelete());
+    const isEditor = canEditWikiArticles();
+    const isDeleted = !!(article.isDeleted && article.isDeleted());
+
+    if (!canUpdate && !canDelete && !isEditor && !canReportWikiArticle()) {
+      return null;
+    }
+
+    const menu: any[] = [];
+    // Edit leads the menu: it is the one thing a reader with rights actually
+    // came to do, and it belongs above the destructive items rather than
+    // beside them as a second button competing with the title.
+    if (canUpdate) {
+      menu.push(
+        m(
+          Button,
+          {
+            icon: 'fas fa-pencil-alt',
+            onclick: () => m.route.set(basePath() + BASE_PATH + '/' + encodeURIComponent(article.id()) + '/edit'),
+          },
+          tr('action.edit', 'Edit')
+        )
+      );
+    }
+    // Reporting sits between the reader's action and the editor's ones: it is
+    // what somebody without rights came here to do, and it is not destructive.
+    if (canReportWikiArticle() && !isDeleted) {
+      menu.push(m(Button, { icon: 'fas fa-flag', onclick: () => app.modal.show(WikiReportModal, { article }) }, tr('action.report', 'Report')));
+    }
+    if (isEditor && !isDeleted) {
+      menu.push(m(Button, { icon: 'fas fa-trash', onclick: () => this._softDelete(article) }, tr('action.delete', 'Delete')));
+    }
+    if (isEditor && isDeleted) {
+      menu.push(m(Button, { icon: 'fas fa-reply', onclick: () => this._restore(article) }, tr('action.restore', 'Restore')));
+    }
+    if (canDelete && isDeleted) {
+      menu.push(m(Button, { icon: 'fas fa-times', onclick: () => this._deleteForever(article) }, tr('action.delete_forever', 'Delete forever')));
+    }
+
+    // Nothing to offer: rights that apply to no action on this article (a
+    // delete permission while the article is not deleted, say) used to leave
+    // an empty control bar behind.
+    if (!menu.length) {
+      return null;
+    }
+
+    return m(
+      'div',
+      { className: 'LinkRobinsWiki-articleControls' },
+      m(Dropdown, { className: 'Dropdown--icon', icon: 'fas fa-ellipsis-h', buttonClassName: 'Button Button--icon' }, menu)
+    );
+  }
+
+  // --- Revision history --------------------------------------------------
+
+  // Other articles filed under the same category. Automatic rather than
+  // hand-curated: a category is already the author's statement about what
+  // belongs together, so this needs no extra field on the article and stays
+  // correct as the category grows.
+  _renderRelated(article: any) {
+    if (!relatedEnabled() || !this.related.length) return null;
+
+    return m('section', { className: 'LinkRobinsWiki-related' }, [
+      m('h2', { className: 'LinkRobinsWiki-related-heading' }, tr('show.related_heading', 'Related articles')),
+      m(
+        'ul',
+        { className: 'LinkRobinsWiki-related-list' },
+        this.related.map((other: any) =>
+          m(
+            'li',
+            { key: 'related-' + other.id() },
+            m('a', { href: articleHref(other), onclick: (e: any) => safeNavigate(articleHref(other), e) }, other.title())
+          )
+        )
+      ),
+    ]);
+  }
+
+  _loadRelated(article: any) {
+    this.related = [];
+
+    if (!relatedEnabled()) return;
+
+    let category: any = null;
+    try {
+      category = article.category && article.category();
+    } catch (e) {
+      category = null;
+    }
+    if (!category) return;
+
+    const limit = relatedLimit();
+
+    // One extra, because the article being read is in its own category and
+    // gets filtered out below.
+    loadArticles({ filter: { categoryId: category.id() }, sort: 'position,-lastEditedAt', page: { limit: limit + 1 } }, QUIET)
+      .then((articles: any[]) => {
+        this.related = (articles || []).filter((a: any) => String(a.id()) !== String(article.id())).slice(0, limit);
+        m.redraw();
+      })
+      .catch(() => {
+        // A missing sibling list is not worth an error on the article.
+      });
+  }
+
+  _renderHistory(article: any) {
+    // Admins can restrict revision history to certain groups; don't offer the
+    // section to anyone the server would 403.
+    if (!canViewWikiHistory()) return null;
+
+    const count = article.revisionCount ? article.revisionCount() : 0;
+    if (!count) return null;
+
+    return m('section', { className: 'LinkRobinsWiki-history' }, [
+      m(
+        Button,
+        {
+          className: 'Button Button--text LinkRobinsWiki-history-toggle',
+          icon: this.historyOpen ? 'fas fa-caret-down' : 'fas fa-caret-right',
+          onclick: () => this._toggleHistory(article),
+        },
+        tr('show.history', 'History ({count})', { count })
+      ),
+      this.historyOpen ? this._renderRevisions(article) : null,
+    ]);
+  }
+
+  _toggleHistory(article: any) {
+    this.historyOpen = !this.historyOpen;
+    if (this.historyOpen && this.revisions === null && !this.revisionsLoading) {
+      this.revisionsLoading = true;
+      loadRevisions(article.id())
+        .then((revs: any[]) => {
+          this.revisions = revs || [];
+          this.revisionsHasMore = this.revisions.length >= WIKI_PAGE_LIMIT;
+          this.revisionsLoading = false;
+          m.redraw();
+        })
+        .catch(() => {
+          this.revisions = [];
+          this.revisionsLoading = false;
+          m.redraw();
+        });
+    }
+  }
+
+  _loadMoreRevisions(article: any) {
+    if (this.revisionsLoadingMore || !this.revisionsHasMore || this.revisions === null) return;
+    this.revisionsLoadingMore = true;
+    loadRevisions(article.id(), this.revisions.length)
+      .then((revs: any[]) => {
+        const page = revs || [];
+        const seen = new Set((this.revisions || []).map((r: any) => String(r.id())));
+        this.revisions = (this.revisions || []).concat(page.filter((r: any) => !seen.has(String(r.id()))));
+        this.revisionsHasMore = page.length >= WIKI_PAGE_LIMIT;
+        this.revisionsLoadingMore = false;
+        m.redraw();
+      })
+      .catch(() => {
+        this.revisionsLoadingMore = false;
+        m.redraw();
+      });
+  }
+
+  _renderRevisions(article: any) {
+    if (this.revisionsLoading || this.revisions === null) {
+      return m(LoadingIndicator, { display: 'inline' });
+    }
+    if (!this.revisions.length) {
+      return m('div', { className: 'LinkRobinsWiki-empty' }, tr('show.no_history', 'No revisions yet.'));
+    }
+    return [
+      m(
+        'ul',
+        { className: 'LinkRobinsWiki-revisions' },
+        this.revisions.map((rev: any, idx: number) => this._renderRevision(rev, idx))
+      ),
+      this.revisionsHasMore
+        ? m(
+            'div',
+            { className: 'LinkRobinsWiki-history-loadMore' },
+            m(
+              Button,
+              {
+                className: 'Button Button--text',
+                loading: this.revisionsLoadingMore,
+                onclick: () => this._loadMoreRevisions(article),
+              },
+              tr('show.load_more_history', 'Load older revisions')
+            )
+          )
+        : null,
+    ];
+  }
+
+  _renderRevision(rev: any, idx: number) {
+    const editor = rev.user && rev.user();
+    const id = String(rev.id());
+    const expanded = this.expandedRevision === id;
+    // Revisions are newest-first, so the older version is the next item.
+    const prev = this.revisions ? this.revisions[idx + 1] : null;
+
+    return m('li', { className: 'LinkRobinsWiki-revision', key: 'rev-' + id }, [
+      m(
+        'button',
+        {
+          type: 'button',
+          className: 'LinkRobinsWiki-revision-head',
+          onclick: () => {
+            this.expandedRevision = expanded ? null : id;
+          },
+        },
+        [
+          m('i', { className: 'fas fa-' + (expanded ? 'caret-down' : 'caret-right') + ' LinkRobinsWiki-revision-caret' }),
+          m('span', { className: 'LinkRobinsWiki-revision-date' }, formatDate(rev.createdAt())),
+          editor ? m('span', { className: 'LinkRobinsWiki-revision-user' }, editor.displayName() || editor.username()) : null,
+          !prev ? m('span', { className: 'LinkRobinsWiki-revision-tag' }, tr('show.initial_version', 'created')) : null,
+          rev.summary && rev.summary() ? m('span', { className: 'LinkRobinsWiki-revision-summary' }, rev.summary()) : null,
+        ]
+      ),
+      expanded ? this._renderDiff(rev, prev) : null,
+    ]);
+  }
+
+  _renderDiff(rev: any, prev: any) {
+    const newText = (rev.content && rev.content()) || '';
+    const oldText = prev ? (prev.content && prev.content()) || '' : '';
+    const newTitle = rev.title ? rev.title() : '';
+    const oldTitle = prev && prev.title ? prev.title() : null;
+    const titleChanged = prev && oldTitle !== newTitle;
+
+    const diff = foldContext(lineDiff(oldText, newText));
+    const bodyChanged = hasChanges(diff);
+
+    const parts: any[] = [
+      m(
+        'div',
+        { className: 'LinkRobinsWiki-diff-label' },
+        prev ? tr('show.diff_from_previous', 'Changes from the previous version') : tr('show.diff_initial', 'Initial version')
+      ),
+    ];
+
+    if (titleChanged) {
+      parts.push(
+        m('div', { className: 'LinkRobinsWiki-diff-titleChange' }, [
+          m('span', { className: 'LinkRobinsWiki-diff-titleLabel' }, tr('show.diff_title', 'Title')),
+          m('span', { className: 'LinkRobinsWiki-diff-del' }, oldTitle),
+          m('i', { className: 'fas fa-arrow-right' }),
+          m('span', { className: 'LinkRobinsWiki-diff-add' }, newTitle),
+        ])
+      );
+    }
+
+    if (bodyChanged) {
+      parts.push(
+        m(
+          'div',
+          { className: 'LinkRobinsWiki-diff' },
+          diff.map((l) => this._renderDiffLine(l))
+        )
+      );
+    } else if (!titleChanged) {
+      parts.push(m('div', { className: 'LinkRobinsWiki-diff-none' }, tr('show.diff_none', 'No content changes.')));
+    }
+
+    return m('div', { className: 'LinkRobinsWiki-revisionDiff' }, parts);
+  }
+
+  _renderDiffLine(line: DiffLine) {
+    if (line.type === 'fold') {
+      return m('div', { className: 'LinkRobinsWiki-diff-fold' }, '⋯');
+    }
+    const cls = line.type === 'add' ? 'is-add' : line.type === 'del' ? 'is-del' : 'is-eq';
+    const sign = line.type === 'add' ? '+' : line.type === 'del' ? '−' : ' ';
+    return m('div', { className: 'LinkRobinsWiki-diff-line ' + cls }, [
+      m('span', { className: 'LinkRobinsWiki-diff-sign' }, sign),
+      m('span', { className: 'LinkRobinsWiki-diff-text' }, line.text || ' '),
+    ]);
+  }
+
+  // --- Moderation --------------------------------------------------------
+
+  _softDelete(article: any) {
+    if (!confirm(tr('confirm.soft_delete', 'Delete this article? Editors can restore it later.'))) return;
+    article
+      .save({ isDeleted: true })
+      .then(() => m.redraw())
+      .catch(() => showError(tr('errors.delete_article', 'Could not delete the article.')));
+  }
+
+  _restore(article: any) {
+    article
+      .save({ isDeleted: false })
+      .then(() => m.redraw())
+      .catch(() => showError(tr('errors.restore_article', 'Could not restore the article.')));
+  }
+
+  _deleteForever(article: any) {
+    if (!confirm(tr('confirm.delete_forever', 'Permanently delete this article and its history? This cannot be undone.'))) return;
+    article
+      .delete()
+      .then(() => m.route.set(basePath() + BASE_PATH))
+      .catch(() => showError(tr('errors.delete_article_forever', 'Could not permanently delete the article.')));
+  }
+}
