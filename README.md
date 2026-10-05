@@ -2,24 +2,13 @@
 
 > **Read-only archive of released versions of linkrobins/wiki.** Not for installation: use [Packagist](https://packagist.org/packages/linkrobins/wiki) or the [upstream repository](https://github.com/linkrobins/flarum-wiki).
 
-**20** versions archived · Latest: [`v1.8.2`](https://github.com/flarchive/linkrobins-wiki/tree/archive/v1.8.2) · License: `MIT` · Flarum: `^2.0`
+**0** versions archived · Latest: [`v1.9.1`](https://github.com/flarchive/linkrobins-wiki/tree/archive/v1.9.1) · License: `MIT` · Flarum: `^2.0`
 
 ## Archived Versions
 
 | Version | Released | Flarum | Source |
 |---|---|---|---|
-| `v1.0.0` | 2026-06-22 | `^2.0` | [Browse](https://github.com/flarchive/linkrobins-wiki/tree/archive/v1.0.0) |
-| `v1.1.0` | 2026-07-04 | `^2.0` | [Browse](https://github.com/flarchive/linkrobins-wiki/tree/archive/v1.1.0) |
-| `v1.2.0` | 2026-07-05 | `^2.0` | [Browse](https://github.com/flarchive/linkrobins-wiki/tree/archive/v1.2.0) |
-| `v1.2.1` | 2026-07-14 | `^2.0` | [Browse](https://github.com/flarchive/linkrobins-wiki/tree/archive/v1.2.1) |
-| `v1.3.0` | 2026-07-20 | `^2.0` | [Browse](https://github.com/flarchive/linkrobins-wiki/tree/archive/v1.3.0) |
-| `v1.3.1` | 2026-07-20 | `^2.0` | [Browse](https://github.com/flarchive/linkrobins-wiki/tree/archive/v1.3.1) |
-| `v1.3.2` | 2026-07-20 | `^2.0` | [Browse](https://github.com/flarchive/linkrobins-wiki/tree/archive/v1.3.2) |
-| `v1.4.0` | 2026-07-22 | `^2.0` | [Browse](https://github.com/flarchive/linkrobins-wiki/tree/archive/v1.4.0) |
-| `v1.4.1` | 2026-08-12 | `^2.0` | [Browse](https://github.com/flarchive/linkrobins-wiki/tree/archive/v1.4.1) |
-| `v1.5.0` | 2026-08-24 | `^2.0` | [Browse](https://github.com/flarchive/linkrobins-wiki/tree/archive/v1.5.0) |
-
-[View all 20 versions](https://github.com/flarchive/linkrobins-wiki/tags)
+| — | — | — | — |
 
 Catalog entry: [packages/linkrobins-wiki.json](https://github.com/flarchive/archive-index/blob/main/packages/linkrobins-wiki.json)
 
