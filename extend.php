@@ -1,0 +1,220 @@
+<?php
+
+use Flarum\Extend;
+use Flarum\Search\Database\DatabaseSearchDriver;
+use LinkRobins\Wiki\Access;
+use LinkRobins\Wiki\Api\Resource\WikiArticleResource;
+use LinkRobins\Wiki\Content;
+use LinkRobins\Wiki\Seo;
+use LinkRobins\Wiki\Sitemap;
+use LinkRobins\Wiki\Api\Resource\WikiCategoryResource;
+use LinkRobins\Wiki\Api\Resource\WikiCommentResource;
+use LinkRobins\Wiki\Api\Resource\WikiReportResource;
+use LinkRobins\Wiki\Api\Resource\WikiRevisionResource;
+use LinkRobins\Wiki\Search\ArticleFulltextFilter;
+use LinkRobins\Wiki\Search\ArticleSearcher;
+use LinkRobins\Wiki\Search\CommentSearcher;
+use LinkRobins\Wiki\Search\Filter as Filters;
+use LinkRobins\Wiki\Search\RevisionSearcher;
+use LinkRobins\Wiki\WikiArticle;
+use LinkRobins\Wiki\WikiCategory;
+use LinkRobins\Wiki\WikiComment;
+use LinkRobins\Wiki\Event;
+use LinkRobins\Wiki\WikiReport;
+use LinkRobins\Wiki\WikiRevision;
+use LinkRobins\Wiki\WikiServiceProvider;
+
+return [
+    (new Extend\Frontend('forum'))
+        ->js(__DIR__ . '/js/dist/forum.js')
+        ->css(__DIR__ . '/less/forum.less')
+        ->route('/wiki',           'linkrobins-wiki.index', Content\IndexPage::class)
+        ->route('/wiki/new',       'linkrobins-wiki.compose')
+        ->route('/wiki/{id}',      'linkrobins-wiki.show', Content\ArticlePage::class)
+        ->route('/wiki/{id}/edit', 'linkrobins-wiki.edit')
+        // Last, so it overrides any SEO extension's blanket "index, follow".
+        ->content(Content\NoIndexEditorPages::class, -100),
+
+    // Article meta for forums running fof/seo. Conditional so the driver class
+    // (which implements fof/seo's interface) is never loaded without it.
+    (new Extend\Conditional())
+        ->whenExtensionEnabled('fof-seo', fn () => [
+            (new \FoF\Seo\Extend\SEO())
+                ->addExtender('linkrobins-wiki-article', Seo\ArticleSeoPage::class),
+        ]),
+
+    // Articles and the wiki index in fof/sitemap's sitemap, for forums that
+    // run it. Conditional for the same reason as the fof/seo block above.
+    (new Extend\Conditional())
+        ->whenExtensionEnabled('fof-sitemap', fn () => [
+            (new \FoF\Sitemap\Extend\Sitemap())
+                ->addResource(Sitemap\ArticleSitemapResource::class)
+                ->addStaticUrl('linkrobins-wiki.index'),
+        ]),
+
+    (new Extend\Frontend('admin'))
+        ->js(__DIR__ . '/js/dist/admin.js')
+        ->css(__DIR__ . '/less/admin.less'),
+
+    new Extend\Locales(__DIR__ . '/locale'),
+
+    (new Extend\Settings())
+        ->default('linkrobins-wiki.index_layout', '')
+        // How many articles each category shows on the default wiki home page
+        // before its "See all" link.
+        ->default('linkrobins-wiki.home_per_category', 5)
+        // Table of contents: on by default, only shown once an article has at
+        // least this many headings so short articles don't get a stub rail.
+        ->default('linkrobins-wiki.toc_enabled', true)
+        ->default('linkrobins-wiki.toc_min_headings', 2)
+        // Where the global "Wiki" link sits in the index sidebar nav, and
+        // whether wiki pages drop that sidebar and use the full width.
+        // Related articles: a short list of siblings from the same category
+        // under each article. Off means the section never renders.
+        ->default('linkrobins-wiki.related_enabled', true)
+        ->default('linkrobins-wiki.related_limit', 5)
+        ->default('linkrobins-wiki.nav_position', 'sections')
+        ->default('linkrobins-wiki.full_width', false)
+        ->serializeToForum('linkrobinsWikiIndexLayout', 'linkrobins-wiki.index_layout')
+        ->serializeToForum('linkrobinsWikiHomePerCategory', 'linkrobins-wiki.home_per_category', fn ($value) => Content\IndexPage::perCategory($value))
+        ->serializeToForum(
+            'linkrobinsWikiNavPosition',
+            'linkrobins-wiki.nav_position',
+            // An unset setting arrives as '', which is not one of the four
+            // positions; fall back rather than let the frontend guess.
+            fn ($value) => in_array($value, ['top', 'below_all', 'sections', 'bottom', 'hidden'], true) ? $value : 'sections'
+        )
+        ->serializeToForum('linkrobinsWikiFullWidth', 'linkrobins-wiki.full_width', fn ($value) => (bool) $value)
+        ->serializeToForum('linkrobinsWikiRelatedEnabled', 'linkrobins-wiki.related_enabled', fn ($value) => (bool) $value)
+        ->serializeToForum('linkrobinsWikiRelatedLimit', 'linkrobins-wiki.related_limit', fn ($value) => max(1, min(20, (int) $value)))
+        ->serializeToForum('linkrobinsWikiTocEnabled', 'linkrobins-wiki.toc_enabled', fn ($value) => (bool) $value)
+        ->serializeToForum('linkrobinsWikiTocMinHeadings', 'linkrobins-wiki.toc_min_headings', fn ($value) => max(1, (int) $value)),
+
+    (new Extend\ApiResource(WikiCategoryResource::class)),
+    (new Extend\ApiResource(WikiArticleResource::class)),
+    (new Extend\ApiResource(WikiRevisionResource::class)),
+    (new Extend\ApiResource(WikiCommentResource::class)),
+    (new Extend\ApiResource(WikiReportResource::class)),
+
+    (new Extend\Policy())
+        ->modelPolicy(WikiArticle::class,  Access\WikiArticlePolicy::class)
+        ->modelPolicy(WikiCategory::class, Access\WikiCategoryPolicy::class)
+        ->modelPolicy(WikiComment::class,  Access\WikiCommentPolicy::class)
+        ->globalPolicy(Access\GlobalPolicy::class),
+
+    (new Extend\ServiceProvider())
+        ->register(WikiServiceProvider::class),
+
+    (new Extend\SearchDriver(DatabaseSearchDriver::class))
+        ->addSearcher(WikiArticle::class, ArticleSearcher::class)
+        // Without a fulltext filter a filter[q] on articles is silently
+        // ignored, so nothing could search the wiki at all.
+        ->setFulltext(ArticleSearcher::class, ArticleFulltextFilter::class)
+        ->addFilter(ArticleSearcher::class, Filters\CategoryIdFilter::class)
+        ->addSearcher(WikiRevision::class, RevisionSearcher::class)
+        ->addFilter(RevisionSearcher::class, Filters\ArticleIdFilter::class)
+        ->addSearcher(WikiComment::class, CommentSearcher::class)
+        ->addFilter(CommentSearcher::class, Filters\CommentArticleIdFilter::class),
+
+    (new Extend\ApiResource(\Flarum\Api\Resource\ForumResource::class))
+        ->fields(fn () => [
+            // Whether the current user may start / edit articles. The frontend
+            // uses these to show or hide the "New article" and edit controls.
+            // Admins always pass. A policy can() shouldn't throw under normal
+            // operation; if it somehow does, degrade to false rather than 500
+            // the forum boot payload (this field ships on every forum response).
+            \Flarum\Api\Schema\Boolean::make('canCreateWikiArticle')
+                ->get(function ($model, \Flarum\Api\Context $context) {
+                    $actor = $context->getActor();
+                    if ($actor->isGuest()) {
+                        return false;
+                    }
+                    try {
+                        return $actor->can('createArticle');
+                    } catch (\Throwable $e) {
+                        return false;
+                    }
+                }),
+
+            \Flarum\Api\Schema\Boolean::make('canReportWikiArticle')
+                ->get(function ($model, \Flarum\Api\Context $context) {
+                    $actor = $context->getActor();
+                    if ($actor->isGuest()) {
+                        return false;
+                    }
+                    try {
+                        return $actor->can('reportArticle');
+                    } catch (\Throwable $e) {
+                        return false;
+                    }
+                }),
+
+            \Flarum\Api\Schema\Boolean::make('canEditWikiArticles')
+                ->get(function ($model, \Flarum\Api\Context $context) {
+                    $actor = $context->getActor();
+                    if ($actor->isGuest()) {
+                        return false;
+                    }
+                    try {
+                        return $actor->can('editArticles');
+                    } catch (\Throwable $e) {
+                        return false;
+                    }
+                }),
+
+            \Flarum\Api\Schema\Boolean::make('canCommentWiki')
+                ->get(function ($model, \Flarum\Api\Context $context) {
+                    $actor = $context->getActor();
+                    if ($actor->isGuest()) {
+                        return false;
+                    }
+                    try {
+                        return $actor->can('comment');
+                    } catch (\Throwable $e) {
+                        return false;
+                    }
+                }),
+
+            // Unlike the fields above, guests can hold viewHistory (it's
+            // seeded to the guest group so history stays public by default),
+            // so there is no isGuest() short-circuit here.
+            \Flarum\Api\Schema\Boolean::make('canViewWikiHistory')
+                ->get(function ($model, \Flarum\Api\Context $context) {
+                    try {
+                        return $context->getActor()->can('viewHistory');
+                    } catch (\Throwable $e) {
+                        return false;
+                    }
+                }),
+        ]),
+
+    // Reports and article changes go to the audit log when flarum/audit is
+    // installed, so an editor who already lives in that trail sees them without
+    // watching the wiki's own queue. Conditional, so this is a no-op otherwise:
+    // the Audit extender only exists while that extension is enabled.
+    (new Extend\Conditional())
+        ->whenExtensionEnabled('flarum-audit', fn () => [
+            (new \Flarum\Audit\Extend\Audit())
+                ->listen(Event\ArticleReported::class, 'wiki.article_reported', fn (Event\ArticleReported $e) => [
+                    'article' => $e->report->article_id,
+                    'title' => $e->report->article?->title,
+                    'reason' => $e->report->reason,
+                ])
+                ->listen(Event\ArticleCreated::class, 'wiki.article_created', fn (Event\ArticleCreated $e) => [
+                    'article' => $e->article->id,
+                    'title' => $e->article->title,
+                ])
+                ->listen(Event\ArticleEdited::class, 'wiki.article_edited', fn (Event\ArticleEdited $e) => [
+                    'article' => $e->article->id,
+                    'title' => $e->article->title,
+                ])
+                ->listen(Event\ArticleDeleted::class, 'wiki.article_deleted', fn (Event\ArticleDeleted $e) => [
+                    'article' => $e->article->id,
+                    'title' => $e->article->title,
+                ])
+                ->listen(Event\ArticleRestored::class, 'wiki.article_restored', fn (Event\ArticleRestored $e) => [
+                    'article' => $e->article->id,
+                    'title' => $e->article->title,
+                ]),
+        ]),
+];
